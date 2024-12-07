@@ -1,4 +1,5 @@
 import datetime
+import time
 import uuid
 import duckdb
 import secrets
@@ -44,6 +45,12 @@ class Company(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+class SensorDataRequest(BaseModel):
+    sensor_ids: List[int]
+    from_timestamp: int
+    to_timestamp: int
+    company_api_key: str
 
 def generate_api_key():
     return str(uuid.uuid4())
@@ -99,8 +106,9 @@ def validate_sensor_api_key(api_key: str) -> int:
 #                  (add, update and delete)                # 
 #----------------------------------------------------------#
 
-@app.post("/api/v1/admin", status_code=201)
-async def create_admin(admin: Admin):
+@app.post("/api/v1/admins", status_code=201)
+async def create_admin(admin: Admin, token: str = Header(...)):
+    get_current_user(token)
     try:
         conn.execute("""
             INSERT INTO admins (username, password)
@@ -108,45 +116,34 @@ async def create_admin(admin: Admin):
         """, (admin.username, admin.password))
     except duckdb.ConversionException:
         raise HTTPException(status_code=400, detail="User already exists")
-    return {"message": "User created successfully"}
+    return {"message": "Admin created successfully"}
 
-@app.put("/api/v1/admin/{username}")
-async def update_admin(username: str, admin: Admin):
+@app.put("/api/v1/admins/{username}")
+async def update_admin(username: str, admin: Admin, token: str = Header(...)):
+    get_current_user(token)
     existing_user = conn.execute("SELECT * FROM admins WHERE username = ?", (username,)).fetchone()
     if not existing_user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="Admin not found")
     conn.execute("""
-        UPDATE users SET password = ? WHERE username = ?
+        UPDATE admins SET password = ? WHERE username = ?
     """, (admin.password, username))
-    return {"message": "User updated successfully"}
+    return {"message": "Admin updated successfully"}
 
-@app.delete("/api/v1/admin/{username}")
-async def delete_admin(username: str):
+@app.delete("/api/v1/admins/{username}")
+async def delete_admin(username: str, token: str = Header(...)):
+    get_current_user(token)
     existing_user = conn.execute("SELECT * FROM admins WHERE username = ?", (username,)).fetchone()
     if not existing_user:
-        raise HTTPException(status_code=404, detail="User not found")
-    conn.execute("DELETE FROM users WHERE username = ?", (username,))
-    return {"message": "User deleted successfully"}
-
-def validate_sensor_api_key(api_key: str) -> int:
-    # Consultar la base de datos para verificar la clave API del sensor
-    result = conn.execute("SELECT sensor_id FROM sensors WHERE sensor_api_key = ?", (api_key,)).fetchone()
-    
-    # Si no se encuentra el sensor, lanzar una excepción
-    if not result:
-        raise HTTPException(status_code=401, detail="Invalid sensor API key")
-    
-    # Devolver el sensor_id correspondiente
-    return result[0]
+        raise HTTPException(status_code=404, detail="Admin not found")
+    conn.execute("DELETE FROM admins WHERE username = ?", (username,))
+    return {"message": "Admin deleted successfully"}
 
 #----------------------------------------------------------#
-#                       COMPANY REST                       #
+#                          COMPANY                         #
 #           (get_all, get_one, add_one, delete_one)        #
 #----------------------------------------------------------#
 
-#@app.post("/api/companies")
-
-@app.post("/api/companies")
+@app.post("/api/v1/companies")
 async def add_company(company: Company, token: str = Header(...)):
     get_current_user(token)
     company_api_key = generate_api_key()
@@ -157,17 +154,7 @@ async def add_company(company: Company, token: str = Header(...)):
     new_company_id = conn.execute("SELECT MAX(company_id) FROM companies").fetchone()[0]
     return {"message": "Company added successfully", "company_id": new_company_id, "company_api_key": company_api_key}
 
-#@app.get("/api/companies")
-#async def get_companies(token: str, company_api_key: str):
-#    get_current_user(token)
-#    validate_company_api_key(company_api_key)
-#    companies = conn.execute("SELECT * FROM companies").fetchall()
-#    return [{"company_id": c[0],
-#             "company_name": c[1],
-#             "company_api_key": c[2]}
-#            for c in companies]
-
-@app.get("/api/companies/{company_id}")
+@app.get("/api/v1/companies/{company_id}")
 async def get_company(company_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -178,7 +165,7 @@ async def get_company(company_id: int, token: str = Header(...), company_api_key
             "company_name": company[1],
             "company_api_key": company[2]}
 
-@app.put("/api/companies/{company_id}")
+@app.put("/api/v1/companies/{company_id}")
 async def update_company(company_id: int, company: Company, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -187,7 +174,7 @@ async def update_company(company_id: int, company: Company, token: str = Header(
     """, (company.company_name, company_id))
     return {"message": "Company updated successfully"}
 
-@app.delete("/api/companies/{company_id}")
+@app.delete("/api/v1/companies/{company_id}")
 async def delete_company(company_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -195,11 +182,11 @@ async def delete_company(company_id: int, token: str = Header(...), company_api_
     return {"message": "Company deleted successfully"}
 
 #----------------------------------------------------------#
-#                       LOCATION REST                      #
+#                         LOCATION                         #
 #           (get_all, get_one, add_one, delete_one)        #
 #----------------------------------------------------------#
 
-@app.post("/api/locations")
+@app.post("/api/v1/locations")
 async def add_location(location: Location, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -210,9 +197,7 @@ async def add_location(location: Location, token: str = Header(...), company_api
     new_location_id = conn.execute("SELECT MAX(location_id) FROM locations").fetchone()[0]
     return {"message": "Location added successfully", "location_id": new_location_id}
 
-
-#Make this only return the locations from the company api key
-@app.get("/api/locations")
+@app.get("/api/v1/locations")
 async def get_locations(token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -225,7 +210,7 @@ async def get_locations(token: str = Header(...), company_api_key: str = Header(
              "location_meta": loc[5]}
             for loc in locations]
 
-@app.get("/api/locations/{location_id}")
+@app.get("/api/v1/locations/{location_id}")
 async def get_location(location_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -244,27 +229,20 @@ async def get_location(location_id: int, token: str = Header(...), company_api_k
             "location_city": location[4],
             "location_meta": location[5]}
 
-@app.put("/api/locations/{location_id}")
+@app.put("/api/v1/locations/{location_id}")
 async def update_location(location_id: int, location: Location, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
-    
-    # Verificar si el location_id existe
-    existing_location = conn.execute("SELECT * FROM locations WHERE location_id = ?", (location_id,)).fetchone()
-    
+    existing_location = conn.execute("SELECT * FROM locations WHERE location_id = ?", (location_id,)).fetchone()   
     if existing_location:
-        # Eliminar el registro existente
         conn.execute("DELETE FROM locations WHERE location_id = ?", (location_id,))
-    
-    # Insertar el nuevo registro
     conn.execute("""
         INSERT INTO locations (location_id, company_id, location_name, location_country, location_city, location_meta)
         VALUES (?, ?, ?, ?, ?, ?)
     """, (location_id, location.company_id, location.location_name, location.location_country, location.location_city, location.location_meta))
-    
     return {"message": "Location updated successfully"}
 
-@app.delete("/api/locations/{location_id}")
+@app.delete("/api/v1/locations/{location_id}")
 async def delete_location(location_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -272,11 +250,11 @@ async def delete_location(location_id: int, token: str = Header(...), company_ap
     return {"message": "Location deleted successfully"}
 
 #----------------------------------------------------------#
-#                       SENSOR REST                        #
+#                          SENSOR                          #
 #           (get_all, get_one, add_one, delete_one)        #
 #----------------------------------------------------------#
 
-@app.post("/api/sensors")
+@app.post("/api/v1/sensors")
 async def add_sensor(sensor: Sensor, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -288,7 +266,7 @@ async def add_sensor(sensor: Sensor, token: str = Header(...), company_api_key: 
     new_sensor_id = conn.execute("SELECT MAX(sensor_id) FROM sensors").fetchone()[0]
     return {"message": "Sensor added successfully", "sensor_id": new_sensor_id, "sensor_api_key": sensor_api_key}
 
-@app.get("/api/sensors") #ALL SENSORS
+@app.get("/api/v1/sensors") #ALL SENSORS
 async def get_sensors(token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -307,7 +285,7 @@ async def get_sensors(token: str = Header(...), company_api_key: str = Header(..
              "sensor_api_key": sens[5]}
             for sens in sensors]
 
-@app.get("/api/locations/{location_id}/sensors") #LOCATION SENSORS
+@app.get("/api/v1/locations/{location_id}/sensors") #LOCATION SENSORS
 async def get_sensors_by_location(location_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -326,7 +304,7 @@ async def get_sensors_by_location(location_id: int, token: str = Header(...), co
              "sensor_api_key": sens[5]}
             for sens in sensors]
 
-@app.get("/api/sensors/{sensor_id}")
+@app.get("/api/v1/sensors/{sensor_id}")
 async def get_sensor(sensor_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -346,27 +324,20 @@ async def get_sensor(sensor_id: int, token: str = Header(...), company_api_key: 
             "sensor_meta": sensor[4],
             "sensor_api_key": sensor[5]}
 
-@app.put("/api/sensors/{sensor_id}")
+@app.put("/api/v1/sensors/{sensor_id}")
 async def update_sensor(sensor_id: int, sensor: Sensor, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
-    
-    # Verificar si el sensor_id existe
     existing_sensor = conn.execute("SELECT * FROM sensors WHERE sensor_id = ?", (sensor_id,)).fetchone()
-    
     if existing_sensor:
-        # Eliminar el registro existente
         conn.execute("DELETE FROM sensors WHERE sensor_id = ?", (sensor_id,))
-    
-    # Insertar el nuevo registro
     conn.execute("""
         INSERT INTO sensors (sensor_id, location_id, sensor_name, sensor_category, sensor_meta, sensor_api_key)
         VALUES (?, ?, ?, ?, ?, ?)
     """, (sensor_id, sensor.location_id, sensor.sensor_name, sensor.sensor_category, sensor.sensor_meta, sensor.sensor_api_key))
-    
     return {"message": "Sensor updated successfully"}
 
-@app.delete("/api/sensors/{sensor_id}")
+@app.delete("/api/v1/sensors/{sensor_id}")
 async def delete_sensor(sensor_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
@@ -374,7 +345,7 @@ async def delete_sensor(sensor_id: int, token: str = Header(...), company_api_ke
     return {"message": "Sensor deleted successfully"}
 
 #----------------------------------------------------------#
-#                      SENSOR-DATA REST                    #
+#                         SENSOR-DATA                      #
 #           (get_all, get_one, add_one, delete_one)        #
 #----------------------------------------------------------#
 
@@ -392,6 +363,7 @@ async def add_sensor_data(data: SensorData, request: Request):
     """, (sensor_id, json_data_str, timestamp))
     return {"message": "Sensor data added successfully", "timestamp": timestamp}
 
+
 @app.delete("/api/sensors/{sensor_id}/data")
 async def delete_sensor_data(sensor_id: int, api_key: str, token: str):
     get_current_user(token)
@@ -401,35 +373,49 @@ async def delete_sensor_data(sensor_id: int, api_key: str, token: str):
     conn.execute("DELETE FROM sensor_data WHERE sensor_id = ?", (sensor_id,))
     return {"message": "Sensor data deleted successfully"}
 
-@app.get("/api/v1/sensor_data")
-async def get_sensor_data(
-    sensor_ids: List[int] = Query(..., description="Array of sensor IDs"),
-    from_timestamp: int = Query(..., description="Start timestamp in EPOCH format"),
-    to_timestamp: int = Query(..., description="End timestamp in EPOCH format"),
-    company_api_key: str = Header(...)
-):
-    validate_company_api_key(company_api_key)
-    
-    # Convertir los timestamps de EPOCH a formato de fecha y hora
-    from_datetime = datetime.datetime.fromtimestamp(from_timestamp)
-    to_datetime = datetime.datetime.fromtimestamp(to_timestamp)
+#@app.get("/api/v1/sensor_data")
+#async def get_sensor_data(
+#    sensor_ids: List[int] = Query(..., description="Array of sensor IDs"),
+#    from_timestamp: int = Query(..., description="Start timestamp in EPOCH format"),
+#    to_timestamp: int = Query(..., description="End timestamp in EPOCH format"),
+#    company_api_key: str = Header(...)
+#):
+#    validate_company_api_key(company_api_key)
+#    
+#    # Convertir los timestamps de EPOCH a formato de fecha y hora
+#    from_datetime = datetime.datetime.fromtimestamp(from_timestamp).strftime('%Y-%m-%dT%H:%M:%S.%f')
+#    to_datetime = datetime.datetime.fromtimestamp(to_timestamp).strftime('%Y-%m-%dT%H:%M:%S.%f')
+#   
+#   # Consultar la base de datos para obtener los datos del sensor en el rango de tiempo especificado
+#    query = """
+#        SELECT sensor_id, json_data, timestamp 
+#        FROM sensor_data 
+#        WHERE sensor_id IN ({}) AND timestamp BETWEEN ? AND ?
+#    """.format(','.join('?' * len(sensor_ids)))
+#    
+#    params = sensor_ids + [from_datetime, to_datetime]
+#    
+#    return [{"sensor_id": d[0], "json_data": d[1], "timestamp": d[2].strftime('%Y-%m-%dT%H:%M:%S.%f')} for d in data]
+
+@app.post("/api/v1/sensor_data/query")
+async def get_sensor_data(data: SensorDataRequest):
+    validate_company_api_key(data.company_api_key)
     
     # Consultar la base de datos para obtener los datos del sensor en el rango de tiempo especificado
     query = """
         SELECT sensor_id, json_data, timestamp 
         FROM sensor_data 
         WHERE sensor_id IN ({}) AND timestamp BETWEEN ? AND ?
-    """.format(','.join('?' * len(sensor_ids)))
+    """.format(','.join('?' * len(data.sensor_ids)))
     
-    params = sensor_ids + [from_datetime, to_datetime]
-    data = conn.execute(query, params).fetchall()
+    params = data.sensor_ids + [data.from_timestamp, data.to_timestamp]
+    result = conn.execute(query, params).fetchall()
     
-    return [{"sensor_id": d[0], "json_data": d[1], "timestamp": d[2]} for d in data]
+    return [{"sensor_id": d[0], "json_data": d[1], "timestamp": datetime.datetime.fromtimestamp(d[2]).strftime('%Y-%m-%dT%H:%M:%S.%f')} for d in result]
 
 
 @app.get("/api/v1/all_sensor_data")
 async def get_all_sensor_data():
-    # Consultar la base de datos para obtener todos los datos del sensor
     query = """
         SELECT sensor_id, json_data, timestamp 
         FROM sensor_data

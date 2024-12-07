@@ -3,11 +3,11 @@ import duckdb
 db_path = 'auto_iot.duckdb'
 conn = duckdb.connect(db_path, read_only=False)
 
+conn.execute("DROP TABLE IF EXISTS admins")
 conn.execute("DROP TABLE IF EXISTS sensor_data")
 conn.execute("DROP TABLE IF EXISTS sensors")
 conn.execute("DROP TABLE IF EXISTS locations")
 conn.execute("DROP TABLE IF EXISTS companies")
-conn.execute("DROP TABLE IF EXISTS admins")
 conn.execute("DROP SEQUENCE IF EXISTS company_seq")
 conn.execute("DROP SEQUENCE IF EXISTS location_seq")
 conn.execute("DROP SEQUENCE IF EXISTS sensor_seq")
@@ -57,14 +57,14 @@ conn.execute("""
     CREATE TABLE sensor_data (
         sensor_id INTEGER REFERENCES sensors(sensor_id),
         json_data JSON,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        timestamp INTEGER
     );
 """)
 
 # Insert a default admin
 conn.execute("""
-    INSERT INTO admins (username, password, company_id)
-    VALUES ('admin', 'admin', NULL);
+    INSERT INTO admins (username, password)
+    VALUES ('admin', 'admin');
 """)
 
 conn.close()
