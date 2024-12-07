@@ -28,7 +28,6 @@ conn.execute("""
     CREATE TABLE admins (
         username STRING PRIMARY KEY,
         password STRING NOT NULL,
-        company_id INTEGER REFERENCES companies(company_id)
     );
 """)
 

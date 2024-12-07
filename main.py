@@ -14,6 +14,10 @@ db_path = 'auto_iot.duckdb'
 conn = duckdb.connect(db_path)
 tokens = {}
 
+class Admin(BaseModel):
+    username: str
+    password: str
+
 class Location(BaseModel):
     company_id: int
     location_name: str
@@ -88,6 +92,51 @@ def validate_sensor_api_key(api_key: str) -> int:
     result = conn.execute("SELECT sensor_id FROM sensors WHERE sensor_api_key = ?", (api_key,)).fetchone()
     if not result:
         raise HTTPException(status_code=401, detail="Invalid sensor API key")
+    return result[0]
+
+#----------------------------------------------------------#
+#                           ADMIN                          #
+#                  (add, update and delete)                # 
+#----------------------------------------------------------#
+
+@app.post("/api/v1/admin", status_code=201)
+async def create_admin(admin: Admin):
+    try:
+        conn.execute("""
+            INSERT INTO admins (username, password)
+            VALUES (?, ?)
+        """, (admin.username, admin.password))
+    except duckdb.ConversionException:
+        raise HTTPException(status_code=400, detail="User already exists")
+    return {"message": "User created successfully"}
+
+@app.put("/api/v1/admin/{username}")
+async def update_admin(username: str, admin: Admin):
+    existing_user = conn.execute("SELECT * FROM admins WHERE username = ?", (username,)).fetchone()
+    if not existing_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    conn.execute("""
+        UPDATE users SET password = ? WHERE username = ?
+    """, (admin.password, username))
+    return {"message": "User updated successfully"}
+
+@app.delete("/api/v1/admin/{username}")
+async def delete_admin(username: str):
+    existing_user = conn.execute("SELECT * FROM admins WHERE username = ?", (username,)).fetchone()
+    if not existing_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    conn.execute("DELETE FROM users WHERE username = ?", (username,))
+    return {"message": "User deleted successfully"}
+
+def validate_sensor_api_key(api_key: str) -> int:
+    # Consultar la base de datos para verificar la clave API del sensor
+    result = conn.execute("SELECT sensor_id FROM sensors WHERE sensor_api_key = ?", (api_key,)).fetchone()
+    
+    # Si no se encuentra el sensor, lanzar una excepción
+    if not result:
+        raise HTTPException(status_code=401, detail="Invalid sensor API key")
+    
+    # Devolver el sensor_id correspondiente
     return result[0]
 
 #----------------------------------------------------------#
