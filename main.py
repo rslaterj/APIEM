@@ -408,3 +408,13 @@ async def get_all_sensor_data():
     data = conn.execute(query).fetchall()
     
     return [{"sensor_id": d[0], "json_data": d[1], "timestamp": d[2]} for d in data]
+
+@app.get("/api/v1/companies", response_model=List[Dict[str, str]])
+async def get_companies():
+    query = """
+        SELECT company_id, company_name, company_api_key
+        FROM companies
+    """
+    data = conn.execute(query).fetchall()
+    
+    return [{"company_id": str(d[0]), "company_name": d[1], "company_api_key": d[2]} for d in data]
