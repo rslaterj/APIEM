@@ -31,7 +31,7 @@ class Sensor(BaseModel):
     sensor_name: str
     sensor_category: str
     sensor_meta: str
-    #sensor_api_key: str
+    sensor_api_key: Optional[str] = None
 
 class SensorData(BaseModel):
     api_key: str
