@@ -1,10 +1,12 @@
+import datetime
 import uuid
 import duckdb
 import secrets
-from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi import FastAPI, HTTPException, Query, Request, Header
 from fastapi.security import HTTPBasicCredentials
 from pydantic import BaseModel
 from typing import List, Dict, Optional
+import json
 
 app = FastAPI()
 #db_path = 'iot.duckdb'
@@ -17,17 +19,18 @@ class Location(BaseModel):
     location_name: str
     location_country: str
     location_city: str
-    location_meta: Optional[str] = None
+    location_meta: str
 
 class Sensor(BaseModel):
     location_id: int
     sensor_name: str
     sensor_category: str
-    sensor_meta: Optional[str] = None
+    sensor_meta: str
+    sensor_api_key: str
 
 class SensorData(BaseModel):
     api_key: str
-    json_data: List[Dict]
+    json_data: List[Dict[str, str]]
 
 class Company(BaseModel):
     #company_id: int
@@ -80,12 +83,20 @@ async def login(request: LoginRequest):
         return {"token": token}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
+# verificar la API del sensor
+def validate_sensor_api_key(api_key: str) -> int:
+    result = conn.execute("SELECT sensor_id FROM sensors WHERE sensor_api_key = ?", (api_key,)).fetchone()
+    if not result:
+        raise HTTPException(status_code=401, detail="Invalid sensor API key")
+    return result[0]
+
 #----------------------------------------------------------#
 #                       COMPANY REST                       #
 #           (get_all, get_one, add_one, delete_one)        #
 #----------------------------------------------------------#
 
-@app.post("/api/companies")
+#@app.post("/api/companies")
+
 @app.post("/api/companies")
 async def add_company(company: Company, token: str = Header(...)):
     get_current_user(token)
@@ -97,15 +108,15 @@ async def add_company(company: Company, token: str = Header(...)):
     new_company_id = conn.execute("SELECT MAX(company_id) FROM companies").fetchone()[0]
     return {"message": "Company added successfully", "company_id": new_company_id, "company_api_key": company_api_key}
 
-@app.get("/api/companies")
-async def get_companies(token: str, company_api_key: str):
-    get_current_user(token)
-    validate_company_api_key(company_api_key)
-    companies = conn.execute("SELECT * FROM companies").fetchall()
-    return [{"company_id": c[0],
-             "company_name": c[1],
-             "company_api_key": c[2]}
-            for c in companies]
+#@app.get("/api/companies")
+#async def get_companies(token: str, company_api_key: str):
+#    get_current_user(token)
+#    validate_company_api_key(company_api_key)
+#    companies = conn.execute("SELECT * FROM companies").fetchall()
+#    return [{"company_id": c[0],
+#             "company_name": c[1],
+#             "company_api_key": c[2]}
+#            for c in companies]
 
 @app.get("/api/companies/{company_id}")
 async def get_company(company_id: int, token: str = Header(...), company_api_key: str = Header(...)):
@@ -119,16 +130,16 @@ async def get_company(company_id: int, token: str = Header(...), company_api_key
             "company_api_key": company[2]}
 
 @app.put("/api/companies/{company_id}")
-async def update_company(company_id: int, company: Company, token: str, company_api_key: str):
+async def update_company(company_id: int, company: Company, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
     conn.execute("""
-        UPDATE companies SET company_name = ?, company_api_key = ? WHERE company_id = ?
-    """, (company.company_name, company.company_api_key, company_id))
+        UPDATE companies SET company_name = ? WHERE company_id = ?
+    """, (company.company_name, company_id))
     return {"message": "Company updated successfully"}
 
 @app.delete("/api/companies/{company_id}")
-async def delete_company(company_id: int, token: str, company_api_key: str):
+async def delete_company(company_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
     conn.execute("DELETE FROM companies WHERE company_id = ?", (company_id,))
@@ -185,17 +196,27 @@ async def get_location(location_id: int, token: str = Header(...), company_api_k
             "location_meta": location[5]}
 
 @app.put("/api/locations/{location_id}")
-async def update_location(location_id: int, location: Location, token: str, company_api_key: str):
+async def update_location(location_id: int, location: Location, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
+    
+    # Verificar si el location_id existe
+    existing_location = conn.execute("SELECT * FROM locations WHERE location_id = ?", (location_id,)).fetchone()
+    
+    if existing_location:
+        # Eliminar el registro existente
+        conn.execute("DELETE FROM locations WHERE location_id = ?", (location_id,))
+    
+    # Insertar el nuevo registro
     conn.execute("""
-        UPDATE locations SET company_id = ?, location_name = ?, location_country = ?, location_city = ?, location_meta = ?
-        WHERE location_id = ?
-    """, (location.company_id, location.location_name, location.location_country, location.location_city, location.location_meta, location_id))
+        INSERT INTO locations (location_id, company_id, location_name, location_country, location_city, location_meta)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (location_id, location.company_id, location.location_name, location.location_country, location.location_city, location.location_meta))
+    
     return {"message": "Location updated successfully"}
 
 @app.delete("/api/locations/{location_id}")
-async def delete_location(location_id: int, token: str, company_api_key: str):
+async def delete_location(location_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
     conn.execute("DELETE FROM locations WHERE location_id = ?", (location_id,))
@@ -277,17 +298,27 @@ async def get_sensor(sensor_id: int, token: str = Header(...), company_api_key: 
             "sensor_api_key": sensor[5]}
 
 @app.put("/api/sensors/{sensor_id}")
-async def update_sensor(sensor_id: int, sensor: Sensor, token: str, company_api_key: str):
+async def update_sensor(sensor_id: int, sensor: Sensor, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
+    
+    # Verificar si el sensor_id existe
+    existing_sensor = conn.execute("SELECT * FROM sensors WHERE sensor_id = ?", (sensor_id,)).fetchone()
+    
+    if existing_sensor:
+        # Eliminar el registro existente
+        conn.execute("DELETE FROM sensors WHERE sensor_id = ?", (sensor_id,))
+    
+    # Insertar el nuevo registro
     conn.execute("""
-        UPDATE sensors SET location_id = ?, sensor_name = ?, sensor_category = ?, sensor_meta = ? 
-        WHERE sensor_id = ?
-    """, (sensor.location_id, sensor.sensor_name, sensor.sensor_category, sensor.sensor_meta, sensor_id))
+        INSERT INTO sensors (sensor_id, location_id, sensor_name, sensor_category, sensor_meta, sensor_api_key)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (sensor_id, sensor.location_id, sensor.sensor_name, sensor.sensor_category, sensor.sensor_meta, sensor.sensor_api_key))
+    
     return {"message": "Sensor updated successfully"}
 
 @app.delete("/api/sensors/{sensor_id}")
-async def delete_sensor(sensor_id: int, token: str, company_api_key: str):
+async def delete_sensor(sensor_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
     conn.execute("DELETE FROM sensors WHERE sensor_id = ?", (sensor_id,))
@@ -304,41 +335,13 @@ async def add_sensor_data(data: SensorData, request: Request):
     if not sensor_api_key:
         raise HTTPException(status_code=401, detail="Missing sensor API key")
     sensor_id = validate_sensor_api_key(sensor_api_key)
+    json_data_str = json.dumps(data.json_data)  # Convertir la lista de diccionarios a una cadena JSON
+    timestamp = int(time.time())  # Obtener la marca de tiempo actual en formato EPOCH
     conn.execute("""
-        INSERT INTO sensor_data (sensor_id, json_data)
-        VALUES (?, ?)
-    """, (sensor_id, str(data.json_data)))
-    return {"message": "Sensor data added successfully"}
-
-#add data v1
-#@app.post("/api/sensor_data", status_code=201)
-#async def add_sensor_data(data: SensorData, token: str):
-#    get_current_user(token)
-#    sensor_id = validate_sensor_api_key(data.api_key)
-#    conn.execute("""
-#        INSERT INTO sensor_data (sensor_id, json_data)
-#        VALUES (?, ?)
-#   """, (sensor_id, str(data.json_data)))
-#    return {"message": "Sensor data added successfully"}
-#REVISAR TABLAS!!
-
-@app.get("/api/sensors/{sensor_id}/data")
-async def get_sensor_data(sensor_id: int, token: str, company_api_key: str):
-    get_current_user(token)
-    validate_company_api_key(company_api_key)
-    data = conn.execute("SELECT json_data, timestamp FROM sensor_data WHERE sensor_id = ?", (sensor_id,)).fetchall()
-    return [{"json_data": d[0], "timestamp": d[1]} for d in data]
-
-@app.put("/api/sensors/{sensor_id}/data")
-async def update_sensor_data(sensor_id: int, data: SensorData, token: str):
-    get_current_user(token)
-    sensor_id_from_key = validate_sensor_api_key(data.api_key)
-    if sensor_id_from_key != sensor_id:
-        raise HTTPException(status_code=403, detail="API key does not match the sensor ID")
-    conn.execute("""
-        UPDATE sensor_data SET json_data = ? WHERE sensor_id = ?
-    """, (str(data.json_data), sensor_id))
-    return {"message": "Sensor data updated successfully"}
+        INSERT INTO sensor_data (sensor_id, json_data, timestamp)
+        VALUES (?, ?, ?)
+    """, (sensor_id, json_data_str, timestamp))
+    return {"message": "Sensor data added successfully", "timestamp": timestamp}
 
 @app.delete("/api/sensors/{sensor_id}/data")
 async def delete_sensor_data(sensor_id: int, api_key: str, token: str):
@@ -348,3 +351,40 @@ async def delete_sensor_data(sensor_id: int, api_key: str, token: str):
         raise HTTPException(status_code=403, detail="API key does not match the sensor ID")
     conn.execute("DELETE FROM sensor_data WHERE sensor_id = ?", (sensor_id,))
     return {"message": "Sensor data deleted successfully"}
+
+@app.get("/api/v1/sensor_data")
+async def get_sensor_data(
+    sensor_ids: List[int] = Query(..., description="Array of sensor IDs"),
+    from_timestamp: int = Query(..., description="Start timestamp in EPOCH format"),
+    to_timestamp: int = Query(..., description="End timestamp in EPOCH format"),
+    company_api_key: str = Header(...)
+):
+    validate_company_api_key(company_api_key)
+    
+    # Convertir los timestamps de EPOCH a formato de fecha y hora
+    from_datetime = datetime.datetime.fromtimestamp(from_timestamp)
+    to_datetime = datetime.datetime.fromtimestamp(to_timestamp)
+    
+    # Consultar la base de datos para obtener los datos del sensor en el rango de tiempo especificado
+    query = """
+        SELECT sensor_id, json_data, timestamp 
+        FROM sensor_data 
+        WHERE sensor_id IN ({}) AND timestamp BETWEEN ? AND ?
+    """.format(','.join('?' * len(sensor_ids)))
+    
+    params = sensor_ids + [from_datetime, to_datetime]
+    data = conn.execute(query, params).fetchall()
+    
+    return [{"sensor_id": d[0], "json_data": d[1], "timestamp": d[2]} for d in data]
+
+
+@app.get("/api/v1/all_sensor_data")
+async def get_all_sensor_data():
+    # Consultar la base de datos para obtener todos los datos del sensor
+    query = """
+        SELECT sensor_id, json_data, timestamp 
+        FROM sensor_data
+    """
+    data = conn.execute(query).fetchall()
+    
+    return [{"sensor_id": d[0], "json_data": d[1], "timestamp": d[2]} for d in data]
