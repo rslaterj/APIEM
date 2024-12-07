@@ -31,7 +31,7 @@ class Sensor(BaseModel):
     sensor_name: str
     sensor_category: str
     sensor_meta: str
-    sensor_api_key: str
+    #sensor_api_key: str
 
 class SensorData(BaseModel):
     api_key: str
@@ -178,6 +178,13 @@ async def update_company(company_id: int, company: Company, token: str = Header(
 async def delete_company(company_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
+    
+    # Eliminar todas las referencias a la compañía
+    conn.execute("DELETE FROM locations WHERE company_id = ?", (company_id,))
+    conn.execute("DELETE FROM sensors WHERE location_id IN (SELECT location_id FROM locations WHERE company_id = ?)", (company_id,))
+    conn.execute("DELETE FROM sensor_data WHERE sensor_id IN (SELECT sensor_id FROM sensors WHERE location_id IN (SELECT location_id FROM locations WHERE company_id = ?))", (company_id,))
+    
+    # Eliminar la compañía
     conn.execute("DELETE FROM companies WHERE company_id = ?", (company_id,))
     return {"message": "Company deleted successfully"}
 
@@ -246,6 +253,12 @@ async def update_location(location_id: int, location: Location, token: str = Hea
 async def delete_location(location_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
+    
+    # Eliminar todas las referencias a la ubicación
+    conn.execute("DELETE FROM sensor_data WHERE sensor_id IN (SELECT sensor_id FROM sensors WHERE location_id = ?)", (location_id,))
+    conn.execute("DELETE FROM sensors WHERE location_id = ?", (location_id,))
+    
+    # Eliminar la ubicación
     conn.execute("DELETE FROM locations WHERE location_id = ?", (location_id,))
     return {"message": "Location deleted successfully"}
 
@@ -341,8 +354,14 @@ async def update_sensor(sensor_id: int, sensor: Sensor, token: str = Header(...)
 async def delete_sensor(sensor_id: int, token: str = Header(...), company_api_key: str = Header(...)):
     get_current_user(token)
     validate_company_api_key(company_api_key)
+    
+    # Eliminar todas las referencias al sensor
+    conn.execute("DELETE FROM sensor_data WHERE sensor_id = ?", (sensor_id,))
+    
+    # Eliminar el sensor
     conn.execute("DELETE FROM sensors WHERE sensor_id = ?", (sensor_id,))
     return {"message": "Sensor deleted successfully"}
+
 
 #----------------------------------------------------------#
 #                         SENSOR-DATA                      #
@@ -362,40 +381,6 @@ async def add_sensor_data(data: SensorData, request: Request):
         VALUES (?, ?, ?)
     """, (sensor_id, json_data_str, timestamp))
     return {"message": "Sensor data added successfully", "timestamp": timestamp}
-
-
-@app.delete("/api/sensors/{sensor_id}/data")
-async def delete_sensor_data(sensor_id: int, api_key: str, token: str):
-    get_current_user(token)
-    sensor_id_from_key = validate_sensor_api_key(api_key)
-    if sensor_id_from_key != sensor_id:
-        raise HTTPException(status_code=403, detail="API key does not match the sensor ID")
-    conn.execute("DELETE FROM sensor_data WHERE sensor_id = ?", (sensor_id,))
-    return {"message": "Sensor data deleted successfully"}
-
-#@app.get("/api/v1/sensor_data")
-#async def get_sensor_data(
-#    sensor_ids: List[int] = Query(..., description="Array of sensor IDs"),
-#    from_timestamp: int = Query(..., description="Start timestamp in EPOCH format"),
-#    to_timestamp: int = Query(..., description="End timestamp in EPOCH format"),
-#    company_api_key: str = Header(...)
-#):
-#    validate_company_api_key(company_api_key)
-#    
-#    # Convertir los timestamps de EPOCH a formato de fecha y hora
-#    from_datetime = datetime.datetime.fromtimestamp(from_timestamp).strftime('%Y-%m-%dT%H:%M:%S.%f')
-#    to_datetime = datetime.datetime.fromtimestamp(to_timestamp).strftime('%Y-%m-%dT%H:%M:%S.%f')
-#   
-#   # Consultar la base de datos para obtener los datos del sensor en el rango de tiempo especificado
-#    query = """
-#        SELECT sensor_id, json_data, timestamp 
-#        FROM sensor_data 
-#        WHERE sensor_id IN ({}) AND timestamp BETWEEN ? AND ?
-#    """.format(','.join('?' * len(sensor_ids)))
-#    
-#    params = sensor_ids + [from_datetime, to_datetime]
-#    
-#    return [{"sensor_id": d[0], "json_data": d[1], "timestamp": d[2].strftime('%Y-%m-%dT%H:%M:%S.%f')} for d in data]
 
 @app.post("/api/v1/sensor_data/query")
 async def get_sensor_data(data: SensorDataRequest):
